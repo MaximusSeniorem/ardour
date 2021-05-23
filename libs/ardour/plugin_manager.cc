@@ -1636,9 +1636,15 @@ PluginManager::vst3_discover (string const& path, bool cache_only)
 
 	DEBUG_TRACE (DEBUG::PluginManager, string_compose ("VST3: discover %1 (%2)\n", path, module_path));
 
+	string cache_file = vst3_valid_cache_file (module_path);
+
 	if (!cache_only && vst3_scanner_bin_path.empty ()) {
 		/* direct scan in the host's process */
 		vst3_blacklist (module_path);
+		/* remove old cache file if any */
+		if (Glib::file_test (cache_file, Glib::FileTest (Glib::FILE_TEST_EXISTS | Glib::FILE_TEST_IS_REGULAR))) {
+			::g_unlink (cache_file.c_str ());
+		}
 
 		if (! vst3_scan_and_cache (module_path, path, sigc::mem_fun (*this, &PluginManager::vst3_plugin))) {
 			DEBUG_TRACE (DEBUG::PluginManager, string_compose ("Cannot load VST3 at '%1'\n", path));
@@ -1648,8 +1654,6 @@ PluginManager::vst3_discover (string const& path, bool cache_only)
 		vst3_whitelist (module_path);
 		return 0;
 	}
-
-	string cache_file = vst3_valid_cache_file (module_path);
 
 	bool run_scan = false;
 
@@ -2497,4 +2501,74 @@ PluginManager::lua_plugin_info ()
 {
 	assert(_lua_plugin_info);
 	return *_lua_plugin_info;
+}
+
+/* ****************************************************************************/
+
+PluginManager::PluginScanLogEntry::PluginScanLogEntry (XMLNode const& node)
+{
+	bool err = false;
+	if (node.name () != "PluginScanLogEntry") {
+		throw failed_constructor ();
+	}
+	err |= !node.get_property ("type", type);
+	err |= !node.get_property ("path", path);
+	err |= !node.get_property ("scan-log", scan_log);
+
+	recent = false;
+}
+
+XMLNode&
+PluginManager::PluginScanLogEntry::state () const
+{
+	XMLNode* node = new XMLNode("PluginScanLogEntry");
+	node->set_property ("type",     type);
+	node->set_property ("path",     path);
+  node->set_property ("scan-log", scan_log);
+	// TODO serialize PluginScanResult
+  return *node;
+}
+
+void
+PluginManager::load_scanlog ()
+{
+	plugin_scan_log.clear ();
+	std::string path = Glib::build_filename (user_plugin_metadata_dir(), "scan_log");
+	if (!Glib::file_test (path, Glib::FILE_TEST_EXISTS)) {
+		return;
+	}
+
+	XMLTree tree;
+	if (!tree.read (path)) {
+		error << string_compose (_("Cannot load Plugin Scan Log from '%1'."), path) << endmsg;
+		return;
+	}
+
+	for (XMLNodeConstIterator i = tree.root()->children().begin(); i != tree.root()->children().end(); ++i) {
+		try {
+			PluginManager::PluginScanLogEntry e (**i);
+			plugin_scan_log.insert (e);
+		} catch (...) {
+			error << string_compose (_("Plugin Scan Log '%1' contains invalid information."), path) << endmsg;
+		}
+	}
+}
+
+void
+PluginManager::save_scanlog ()
+{
+	std::string path = Glib::build_filename (user_plugin_metadata_dir(), "scan_log");
+	XMLNode* root = new XMLNode (X_("PluginScanLog"));
+	root->set_property ("version", 1);
+
+	for (PluginScanLog::iterator i = plugin_scan_log.begin(); i != plugin_scan_log.end(); ++i) {
+		XMLNode& node = (*i).state ();
+		root->add_child_nocopy (node);
+	}
+
+	XMLTree tree;
+	tree.set_root (root);
+	if (!tree.write (path)) {
+		error << string_compose (_("Could not save Plugin Scan Log to %1"), path) << endmsg;
+	}
 }

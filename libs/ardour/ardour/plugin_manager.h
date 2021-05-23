@@ -102,6 +102,16 @@ public:
 		Concealed
 	};
 
+	enum PluginScanResult {
+		OK           = 0x000,
+		Skipped      = 0x001, // plugin is newer than cache
+		Missing      = 0x002, // cache file preset, plugin missing
+		Error        = 0x004, // scan failed
+		Incompatible = 0x008, // plugin is not compatible (eg 32/64bit)
+		TimeOut      = 0x010, // scan timed out
+		Blacklisted  = 0x100
+	};
+
 	std::string user_plugin_metadata_dir () const;
 	void save_statuses ();
 	void set_status (ARDOUR::PluginType type, std::string unique_id, PluginStatusType status);
@@ -145,6 +155,38 @@ public:
 	PBD::Signal3<void, ARDOUR::PluginType, std::string, std::string> PluginTagChanged; //PluginType t, string id, string tag
 
 private:
+
+	struct PluginScanLogEntry {
+		PluginScanLogEntry (PluginType const t, std::string const& p)
+			: type (t)
+			, path (p)
+		{}
+
+		PluginScanLogEntry (XMLNode const&);
+		XMLNode& state () const;
+
+		PluginType       type;
+		std::string      path;
+		std::string      cache_file; // XXX implicit ?
+		PluginScanResult result; // TODO -> types.h
+		std::string      scan_log;
+		PluginInfoList   info;
+		bool             recent; // true: touched in this instance, false: loaded from disk
+
+		bool operator== (PluginScanLogEntry const& other) const {
+			return other.type == type && other.path == path;
+		}
+
+		bool operator< (PluginScanLogEntry const& other) const {
+			if (other.type == type) {
+				return path < other.path;
+			}
+			return type < other.type;
+		}
+	};
+
+	typedef std::set<PluginScanLogEntry> PluginScanLog;
+	PluginScanLog plugin_scan_log;
 
 	struct PluginTag {
 		PluginType const  type;
@@ -245,6 +287,9 @@ private:
 	void load_statuses ();
 	void load_tags ();
 	void load_stats ();
+
+	void load_scanlog ();
+	void save_scanlog ();
 
 	std::string sanitize_tag (const std::string) const;
 
